@@ -1,11 +1,12 @@
 import streamlit as st
+import streamlit.components.v1 as components
 import math
 
 # Impostazione layout
 st.set_page_config(layout="wide", page_title="Ottimizzatore Asole/Resistenze")
 
 # -------------------------------------------------------------------------
-# DIZIONARIO LINGUE (ITALIANO / INGLESE)
+# DIZIONARIO LINGUE
 # -------------------------------------------------------------------------
 lang_dict = {
     "IT": {
@@ -86,7 +87,7 @@ st.write(t["subtitle"])
 
 st.sidebar.header(t["sidebar_params"])
 
-# Metodo e Layout impostati come bottoni visibili
+# Metodo e Layout
 algo_choice = st.sidebar.radio(t["algo_label"], [t["algo_old"], t["algo_new"]])
 algo_mode = 'boundingbox' if algo_choice == t["algo_old"] else 'capsule'
 
@@ -110,9 +111,10 @@ margine_bordo = st.sidebar.number_input(t["margin"], min_value=0.0, max_value=20
 angolo_gradi = st.sidebar.slider(t["angle"], min_value=0, max_value=180, value=45, step=1)
 
 # -------------------------------------------------------------------------
-# FUNZIONI GEOMETRICHE (DISTANZA REALE TRA CAPSULE)
+# FUNZIONI GEOMETRICHE
 # -------------------------------------------------------------------------
 def get_capsule_distance(dx, dy, L, W, theta):
+    """Calcola distanza minima tra asole con geometria a capsula"""
     L_d = max(0, L - W)
     rad = math.radians(theta)
     cos_t = math.cos(rad)
@@ -127,14 +129,40 @@ def get_capsule_distance(dx, dy, L, W, theta):
 
     return dist_segment - W
 
+def find_optimal_pitch(axis, L, W, angle, gap, max_search=1000):
+    """Trova il passo ottimale con ricerca robusta"""
+    min_pitch = W + gap
+    max_pitch = max(L + W + gap + 100, max_search)
+    current = min_pitch
+    step = 0.1
+    found = False
+    
+    while current < max_pitch:
+        if axis == 'X':
+            dist = get_capsule_distance(current, 0, L, W, angle)
+        elif axis == 'Y':
+            dist = get_capsule_distance(0, current, L, W, angle)
+        else:
+            dist = -1
+        
+        if dist >= gap - 0.01: 
+            found = True
+            return current
+        current += step
+    
+    if not found:
+        st.warning(f"⚠️ Attenzione: Passo {axis} non ottimizzabile con questi parametri")
+        return max_pitch
+    return current
+
 # -------------------------------------------------------------------------
-# CALCOLO ALGORITMO E DISPOSIZIONE
+# CALCOLO ALGORITMO
 # -------------------------------------------------------------------------
 rad = math.radians(angolo_gradi)
 L_d = max(0, asola_l - asola_w)
 
-ingombro_x = abs(L_d * math.cos(rad)) + asola_w
-ingombro_y = abs(L_d * math.sin(rad)) + asola_w
+ingombro_x = L_d * abs(math.cos(rad)) + asola_w
+ingombro_y = L_d * abs(math.sin(rad)) + asola_w
 
 spazio_utile_w = foglio_w - (2 * margine_bordo)
 spazio_utile_h = foglio_h - (2 * margine_bordo)
@@ -146,38 +174,35 @@ if algo_mode == 'boundingbox':
     Px = ingombro_x + gap
     Py = ingombro_y + gap
 else:
-    # Calcolo Passo X
-    temp_px = asola_w + gap
-    while temp_px < asola_l + asola_w + gap + 300:
-        if get_capsule_distance(temp_px, 0, asola_l, asola_w, angolo_gradi) >= gap:
-            Px = temp_px
-            break
-        temp_px += 0.2
-
-    # Calcolo Passo Y
-    temp_py = asola_w + gap
-    while temp_py < asola_l + asola_w + gap + 300:
-        if get_capsule_distance(0, temp_py, asola_l, asola_w, angolo_gradi) >= gap:
-            Py = temp_py
-            break
-        temp_py += 0.2
-
+    Px = find_optimal_pitch('X', asola_l, asola_w, angolo_gradi, gap)
+    
     if layout_mode == 'staggered':
-        temp_py_stag = asola_w + gap
-        while temp_py_stag < asola_l + asola_w + gap + 300:
-            dist1 = get_capsule_distance(0.5 * Px, temp_py_stag, asola_l, asola_w, angolo_gradi)
-            dist2 = get_capsule_distance(-0.5 * Px, temp_py_stag, asola_l, asola_w, angolo_gradi)
-            if dist1 >= gap and dist2 >= gap:
-                Py = temp_py_stag
+        Py = asola_w + gap
+        max_search = asola_l + asola_w + gap + 100
+        found_stag = False
+        
+        while Py < max_search:
+            dist1 = get_capsule_distance(0.5 * Px, Py, asola_l, asola_w, angolo_gradi)
+            dist2 = get_capsule_distance(-0.5 * Px, Py, asola_l, asola_w, angolo_gradi)
+            
+            if dist1 >= gap - 0.01 and dist2 >= gap - 0.01:
+                found_stag = True
                 break
-            temp_py_stag += 0.2
+            Py += 0.1
+        
+        if not found_stag:
+            Py = find_optimal_pitch('Y', asola_l, asola_w, angolo_gradi, gap)
     else:
-        while Py < asola_l + asola_w + gap + 300:
-            dist1 = get_capsule_distance(Px, Py, asola_l, asola_w, angolo_gradi)
-            dist2 = get_capsule_distance(Px, -Py, asola_l, asola_w, angolo_gradi)
-            if dist1 >= gap and dist2 >= gap:
+        Py = find_optimal_pitch('Y', asola_l, asola_w, angolo_gradi, gap)
+        
+        max_search = asola_l + asola_w + gap + 100
+        while Py < max_search:
+            dist_diag_x = get_capsule_distance(Px, Py, asola_l, asola_w, angolo_gradi)
+            dist_diag_y = get_capsule_distance(Px, -Py, asola_l, asola_w, angolo_gradi)
+            
+            if dist_diag_x >= gap - 0.01 and dist_diag_y >= gap - 0.01:
                 break
-            Py += 0.2
+            Py += 0.1
 
 # Generazione posizioni
 slots = []
@@ -214,7 +239,7 @@ efficienza = ((len(slots) * area_singola) / (foglio_w * foglio_h)) * 100 if fogl
 st.sidebar.info(f"**{t['area_info']}**\n\n{t['area_desc']} **{area_singola:.1f} mm²**.")
 
 # -------------------------------------------------------------------------
-# RISULTATI E GRAFICA (RENDERING SVG)
+# RISULTATI E RENDERING
 # -------------------------------------------------------------------------
 col1, col2, col3, col4 = st.columns(4)
 col1.metric(t["metrics_tot"], f"{len(slots)} pz")
@@ -240,11 +265,46 @@ else:
 
     for s in slots:
         cx_scaled = s['cx'] * scala
-        # Invertiamo l'asse Y per far combaciare l'origine col disegno industriale (basso-sinistra)
         cy_scaled = (foglio_h - s['cy']) * scala
         
+        # 1. DISEGNO DEI PROFILI DI CALCOLO (AREA DI RISPETTO)
+        if algo_mode == 'boundingbox':
+            # Profilo dell'ingombro effettivo (Rettangolo Giallo)
+            w_box = ingombro_x * scala
+            h_box = ingombro_y * scala
+            svg_code += f"""
+            <rect x="{cx_scaled - w_box/2}" y="{cy_scaled - h_box/2}" 
+                  width="{w_box}" height="{h_box}" 
+                  fill="none" stroke="#fbbf24" stroke-width="1.5" stroke-dasharray="4" opacity="0.8"/>
+            """
+            
+            # Profilo di ingombro sommato al GAP (le asole adiacenti si toccano qui)
+            w_gap = (ingombro_x + gap) * scala
+            h_gap = (ingombro_y + gap) * scala
+            svg_code += f"""
+            <rect x="{cx_scaled - w_gap/2}" y="{cy_scaled - h_gap/2}" 
+                  width="{w_gap}" height="{h_gap}" 
+                  fill="none" stroke="#fbbf24" stroke-width="1" stroke-dasharray="2" opacity="0.3"/>
+            """
+
         svg_code += f"""
         <g transform="translate({cx_scaled},{cy_scaled}) rotate({-angolo_gradi})">
+        """
+        
+        if algo_mode == 'capsule':
+            # Profilo della Capsula sommato al GAP (Capsula Verde)
+            # Viene espansa di 'gap' totali (gap/2 per lato) così le aree di rispetto si toccano
+            l_gap = (asola_l + gap) * scala
+            w_gap = (asola_w + gap) * scala
+            r_gap = w_gap / 2
+            svg_code += f"""
+            <rect x="{-l_gap/2}" y="{-w_gap/2}" 
+                  width="{l_gap}" height="{w_gap}" 
+                  fill="none" stroke="#10b981" stroke-width="1.5" stroke-dasharray="5,5" opacity="0.8" rx="{r_gap}"/>
+            """
+
+        # 2. DISEGNO DELL'ASOLA FISICA
+        svg_code += f"""
             <rect x="{-(asola_l/2)*scala}" y="{-(asola_w/2)*scala}" 
                   width="{asola_l*scala}" height="{asola_w*scala}" 
                   fill="#ef4444" rx="{(asola_w/2)*scala}" stroke="#991b1b" stroke-width="1.5" opacity="0.9"/>
@@ -253,10 +313,12 @@ else:
         </g>
         """
     svg_code += "</svg>"
-    st.components.v1.html(svg_code, width=int(canvas_w) + 20, height=int(canvas_h) + 20)
+    
+    # Render dell'HTML content
+    components.html(svg_code, width=int(canvas_w) + 20, height=int(canvas_h) + 20)
 
 # -------------------------------------------------------------------------
-# SPIEGAZIONI A PIE DI PAGINA
+# FOOTER
 # -------------------------------------------------------------------------
 st.markdown("---")
 c1, c2, c3 = st.columns(3)
